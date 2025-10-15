@@ -46,7 +46,3 @@ def receive_request():
 # Run Server
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
-# Create a temporary file to hold the main logic for now
-with open('task_handler.py', 'w') as f:
-    f.write('def handle_task(data):\n    print(f"Handling task {data.get("task")}")\n    # The main logic will go here\n    pass')
