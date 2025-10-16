@@ -1,144 +1,163 @@
-# generator.py
-import os
+import openai
 import base64
 import json
-from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Initializing OpenAI Client
-try:
-    client = OpenAI(api_key=OPENAI_API_KEY)
-except Exception as e:
-    print(f"FATAL: Could not initialize OpenAI client. Error: {e}")
-    client = None
-
-def decode_attachment(data_uri):
-
-    # Decodes a Base64 Data URI into its content.
-    try:
-        # Find the Base64 part after the last comma
-        _, encoded_data = data_uri.rsplit(',', 1)
-        decoded_bytes = base64.b64decode(encoded_data)
-        # Try decoding as UTF-8, but return bytes if it fails (e.g., image)
-        try:
-            return decoded_bytes.decode('utf-8')
-        except UnicodeDecodeError:
-            return decoded_bytes
-    except Exception as e:
-        print(f"Error decoding attachment: {e}")
-        return ""
-
-def format_attachments_for_prompt(attachments):
-
-    # Converts attachments into a human-readable format for the LLM.
-    # For large files, only provide the name and type.
-
-    if not attachments:
-        return "None"
-
-    formatted_list = []
-    for att in attachments:
-        name = att.get('name', 'file')
-        url = att.get('url', '')
-        
-        # Decode and truncate content to fit within prompt limits
-        content = decode_attachment(url)
-        content_preview = ""
-
-        if isinstance(content, str):
-            # For text content (CSV, JSON, MD), show a snippet
-            content_preview = content[:200] + ("..." if len(content) > 200 else "")
-            formatted_list.append(f"File Name: {name}\nContent Type: TEXT\nContent Preview:\n---\n{content_preview}\n---")
-        else:
-            # For binary content (PNG), just note the type
-            content_preview = f"(Binary content: {len(content)} bytes)"
-            formatted_list.append(f"File Name: {name}\nContent Type: BINARY\nContent Preview:\n---\n{content_preview}\n---")
-            
-    return "\n\n".join(formatted_list)
-
-
-SYSTEM_PROMPT = """
-You are an expert full-stack developer specializing in generating minimal, single-page web applications.
-Your response MUST be a single JSON object containing three keys: 'index.html', 'README.md', and 'LICENSE'.
-
-**CONSTRAINTS & REQUIREMENTS:**
-1.  **Format:** Output ONLY a single JSON object. Do not include markdown formatting outside the JSON block.
-2.  **App:** The application must be a single 'index.html' file using plain JavaScript/HTML/CSS, or Bootstrap/CDN libraries if required by the brief.
-3.  **Attachments:** If attachments are provided, they are Base64 Data URIs. Embed them directly into the JavaScript code using the full Data URI string where needed (e.g., for `fetch` or image sources).
-4.  **License:** The 'LICENSE' file MUST contain the standard MIT License text.
-5.  **README:** The 'README.md' must be professional, complete, and include a **Summary**, **Setup (None required)**, **Usage**, and **Code Explanation**.
-6.  **Code Quality:** The code must be minimal, clean, and avoid embedding secrets.
-"""
-
-def generate_app_files(brief, attachments, round_num, output_path):
+def generate_app_code(brief, checks, attachments, api_key, is_revision=False):
     """
-    Generates application files using the LLM and writes them to the output path.
+    Generate app code using OpenAI API based on the brief and requirements
     """
-    if not client:
-        # If client failed to initialize, create dummy files to at least test deployment
-        print("LLM client not initialized. Creating dummy files.")
-        create_dummy_files(brief, output_path)
-        return
-
-    # 1. Prepare Prompt
-    formatted_attachments = format_attachments_for_prompt(attachments)
+    openai.api_key = api_key
     
-    USER_PROMPT = f"""
-    TASK BRIEF (Round {round_num}):
-    {brief}
-
-    ATTACHMENTS:
-    {formatted_attachments}
-
-    Based on the brief and attachments, generate the three files required. 
-    """
+    # Process attachments to include in prompt
+    attachment_info = ""
+    if attachments:
+        attachment_info = "\n\nAttachments provided:\n"
+        for att in attachments:
+            attachment_info += f"- {att['name']}: {att['url'][:100]}...\n"
     
-    # 2. Call LLM
+    # Build the prompt
+    checks_text = "\n".join(f"- {check}" for check in checks)
+    
+    action = "update" if is_revision else "create"
+    
+    prompt = f"""You are an expert web developer. {action.capitalize()} a complete, production-ready single-page web application based on these requirements:
+
+BRIEF:
+{brief}
+
+REQUIREMENTS TO MEET:
+{checks_text}
+{attachment_info}
+
+IMPORTANT INSTRUCTIONS:
+1. Create a SINGLE HTML file with embedded CSS and JavaScript
+2. The app must be fully functional and meet ALL requirements
+3. Use modern, clean UI design with proper styling
+4. Handle edge cases and errors gracefully
+5. Include clear instructions in the UI if needed
+6. Make it mobile-responsive
+7. If attachments are provided, use them appropriately in the app
+8. Add helpful comments in the code
+9. The app should work immediately when opened in a browser
+10. Do NOT use any external dependencies that require npm/build steps
+11. You can use CDN links for libraries if absolutely necessary
+
+Return ONLY the complete HTML code. No explanations, no markdown, just the raw HTML file content."""
+
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o", # Use a capable model
+        # Call OpenAI API
+        response = openai.chat.completions.create(
+            model="gpt-4",  # or "gpt-3.5-turbo" for faster/cheaper
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_PROMPT},
+                {
+                    "role": "system",
+                    "content": "You are an expert web developer who creates clean, functional, single-file web applications. You always return complete, working code without any markdown formatting or explanations."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ],
-            response_format={"type": "json_object"}
+            temperature=0.7,
+            max_tokens=4000
         )
         
-        # 3. Parse JSON Output
-        generated_json_text = response.choices[0].message.content
-        file_contents = json.loads(generated_json_text)
-
-        # 4. Write Files to Disk
-        for filename, content in file_contents.items():
-            file_path = os.path.join(output_path, filename)
-            
-            # Ensure index.html and README.md are strings
-            if isinstance(content, str):
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                print(f"Wrote file: {filename}")
-            else:
-                # Handle potential non-string output if LLM messes up
-                print(f"ERROR: Content for {filename} was not a string.")
-
-
-    except Exception as e:
-        print(f"FATAL LLM GENERATION ERROR: {e}")
-        # Fallback if LLM fails
-        create_dummy_files(brief, output_path)
-
-
-# Fallback/Bootstrap function for testing or failure
-def create_dummy_files(brief, output_path):
-    """Creates minimal files when LLM generation fails or is skipped."""
-    with open(os.path.join(output_path, 'index.html'), 'w') as f:
-        f.write(f"<!DOCTYPE html><html><head><title>Fallback App</title></head><body><h1>Task Failed/Skipped: {brief[:50]}...</h1></body></html>")
-    
-    with open(os.path.join(output_path, 'README.md'), 'w') as f:
-        f.write("# Fallback App\n\nThis is a placeholder README due to a generation failure.")
+        # Extract the generated code
+        generated_code = response.choices[0].message.content.strip()
         
-    with open(os.path.join(output_path, 'LICENSE'), 'w') as f:
-        f.write("The MIT License (MIT)\n...") # Minimal MIT
+        # Clean up if the model returns markdown code blocks
+        if generated_code.startswith("```html"):
+            generated_code = generated_code.replace("```html", "").replace("```", "").strip()
+        elif generated_code.startswith("```"):
+            generated_code = generated_code.replace("```", "").strip()
+        
+        # Ensure it starts with <!DOCTYPE html> or <html>
+        if not (generated_code.lower().startswith("<!doctype") or generated_code.lower().startswith("<html")):
+            generated_code = f"<!DOCTYPE html>\n{generated_code}"
+        
+        print(f"Generated {len(generated_code)} characters of code")
+        return generated_code
+        
+    except Exception as e:
+        print(f"Error generating code with OpenAI: {str(e)}")
+        # Return a fallback simple HTML page
+        return generate_fallback_html(brief, checks)
+
+def generate_fallback_html(brief, checks):
+    """
+    Generate a simple fallback HTML page if LLM generation fails
+    """
+    checks_html = "\n".join(f"<li>{check}</li>" for check in checks)
+    
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Application</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }}
+        .container {{
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            max-width: 600px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 20px;
+        }}
+        .brief {{
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            color: #666;
+        }}
+        .requirements {{
+            margin-top: 20px;
+        }}
+        .requirements h2 {{
+            color: #667eea;
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }}
+        .requirements ul {{
+            list-style-position: inside;
+            color: #555;
+        }}
+        .requirements li {{
+            margin: 8px 0;
+            padding-left: 10px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Application</h1>
+        <div class="brief">
+            <strong>Brief:</strong> {brief}
+        </div>
+        <div class="requirements">
+            <h2>Requirements:</h2>
+            <ul>
+                {checks_html}
+            </ul>
+        </div>
+    </div>
+</body>
+</html>"""
