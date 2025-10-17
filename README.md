@@ -1,6 +1,6 @@
 An automated deployment system that receives app briefs via API, generates code using OpenAI GPT-4, creates GitHub repositories, and deploys applications to GitHub Pages with support for iterative revisions.
 
-## Tech Stack
+## ⚙️Tech Stack
 - Backend: Python 3.13, Flask 3.0
 - LLM: OpenAI GPT-4
 - Version Control: PyGithub 2.8
