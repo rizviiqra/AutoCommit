@@ -1,5 +1,6 @@
 from github import Github, GithubException
 import time
+import requests # Need to import requests here for the Pages API call
 
 class GitHubManager:
     def __init__(self, token, username):
@@ -7,29 +8,30 @@ class GitHubManager:
         self.github = Github(token)
         self.user = self.github.get_user()
         self.username = username
-        
+        self.default_branch = "main" # Standard branch name
+
     def create_and_deploy_repo(self, repo_name, app_code, readme_content):
         """
-        Create a new GitHub repository and deploy to GitHub Pages
+        Create a new GitHub repository and deploy to GitHub Pages.
         Returns: (repo_url, commit_sha, pages_url)
         """
         try:
-            # Create repository
-            print(f"Creating repository: {repo_name}")
+            # 1. Create repository
+            print(f"Creating public repository: {repo_name}")
             repo = self.user.create_repo(
                 repo_name,
                 description="Auto-generated application",
-                private=False,
+                private=False, # Required to be public
                 auto_init=False
             )
             
-            # Wait a moment for repo to be ready
-            time.sleep(2)
+            # 2. Add files
+            time.sleep(1) # Wait a moment for repo to be ready
             
-            # Create MIT LICENSE
-            mit_license = """MIT License
+            # MIT LICENSE content
+            mit_license = f"""MIT License
 
-Copyright (c) 2025
+Copyright (c) 2025 {self.username}
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -49,22 +51,22 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE."""
             
-            # Create files in the repository
+            # Create files directly on the default branch (main)
             print("Creating LICENSE file...")
-            repo.create_file("LICENSE", "Add MIT License", mit_license)
+            repo.create_file("LICENSE", "Add MIT License", mit_license, branch=self.default_branch)
             
             print("Creating README.md...")
-            repo.create_file("README.md", "Add README", readme_content)
+            repo.create_file("README.md", "Add README", readme_content, branch=self.default_branch)
             
             print("Creating index.html...")
-            commit = repo.create_file("index.html", "Add application code", app_code)
+            commit = repo.create_file("index.html", "Initial application code", app_code, branch=self.default_branch)
             commit_sha = commit['commit'].sha
             
-            # Enable GitHub Pages
-            print("Enabling GitHub Pages...")
-            self._enable_github_pages(repo)
+            # 3. Enable GitHub Pages
+            print(f"Enabling GitHub Pages from the '{self.default_branch}' branch...")
+            self._enable_github_pages(repo, self.default_branch)
             
-            # Construct URLs
+            # 4. Construct URLs
             repo_url = repo.html_url
             pages_url = f"https://{self.username}.github.io/{repo_name}/"
             
@@ -80,44 +82,69 @@ SOFTWARE."""
         except Exception as e:
             print(f"Error creating repository: {str(e)}")
             raise
+
     
     def update_repo(self, repo_name, app_code, readme_content):
         """
-        Update an existing GitHub repository
+        Update an existing GitHub repository for the revision round.
         Returns: (repo_url, commit_sha, pages_url)
         """
         try:
-            # Get existing repository
+            # 1. Get existing repository
             print(f"Getting repository: {repo_name}")
             repo = self.user.get_repo(repo_name)
+
+            # 2. Define the list of files to update/create
+            files_to_update = {
+                "README.md": ("Update README for Round 2", readme_content),
+                "index.html": ("Update application for Round 2", app_code)
+            }
             
-            # Update README.md
-            print("Updating README.md...")
-            readme_file = repo.get_contents("README.md")
-            repo.update_file(
-                "README.md",
-                "Update README for Round 2",
-                readme_content,
-                readme_file.sha
-            )
+            latest_commit = None
             
-            # Update index.html
-            print("Updating index.html...")
-            index_file = repo.get_contents("index.html")
-            commit = repo.update_file(
-                "index.html",
-                "Update application for Round 2",
-                app_code,
-                index_file.sha
-            )
-            commit_sha = commit['commit'].sha
+            # 3. Iterate through files and update/create as necessary (Robustness fix)
+            for path, (message, content) in files_to_update.items():
+                print(f"Processing {path}...")
+                try:
+                    # Try to get contents (file exists)
+                    file_content = repo.get_contents(path, ref=self.default_branch)
+                    
+                    # Update existing file
+                    commit = repo.update_file(
+                        path,
+                        message,
+                        content,
+                        file_content.sha,
+                        branch=self.default_branch
+                    )
+                    latest_commit = commit
+                    print(f"  -> Successfully updated {path}")
+                    
+                except GithubException as e:
+                    # If file not found (404), create it
+                    if e.status == 404:
+                        print(f"  -> File {path} not found, creating it...")
+                        commit = repo.create_file(
+                            path,
+                            message,
+                            content,
+                            branch=self.default_branch
+                        )
+                        latest_commit = commit
+                        print(f"  -> Successfully created {path}")
+                    else:
+                        raise # Re-raise other GitHub errors
+
+            if latest_commit is None:
+                raise Exception("No changes were committed to the repository. Update failed.")
+
+            commit_sha = latest_commit['commit'].sha
             
-            # Construct URLs
+            # 4. Construct URLs (Pages URL should be the same, but confirm commit)
             repo_url = repo.html_url
             pages_url = f"https://{self.username}.github.io/{repo_name}/"
             
-            print(f"Repository updated successfully: {repo_url}")
-            print(f"Pages URL: {pages_url}")
+            print(f"Repository updated successfully. New Commit SHA: {commit_sha}")
             print("Note: GitHub Pages may take 1-2 minutes to redeploy")
             
             return repo_url, commit_sha, pages_url
@@ -129,42 +156,49 @@ SOFTWARE."""
             print(f"Error updating repository: {str(e)}")
             raise
     
-    def _enable_github_pages(self, repo):
-        """Enable GitHub Pages for a repository"""
-        try:
-            # GitHub Pages API endpoint
-            # We'll use the REST API directly since PyGithub doesn't have full Pages support
-            import requests
-            
-            url = f"https://api.github.com/repos/{self.username}/{repo.name}/pages"
-            headers = {
-                "Authorization": f"token {self.github._Github__requester.auth.token}",
-                "Accept": "application/vnd.github.v3+json"
+    def _enable_github_pages(self, repo, branch_name):
+        """Enable or update GitHub Pages for a repository using the REST API."""
+        
+        # NOTE: We use the REST API as PyGithub Pages integration is often incomplete.
+        url = f"https://api.github.com/repos/{self.username}/{repo.name}/pages"
+        
+        # Token format for PyGithub internal authentication is a private attribute,
+        # but the token used for the PyGithub object is the one passed to the constructor.
+        # We ensure 'requests' is imported at the top of the file for this to work.
+        headers = {
+            "Authorization": f"token {self.github._Github__requester.auth.token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        data = {
+            "source": {
+                "branch": branch_name,
+                "path": "/"
             }
-            data = {
-                "source": {
-                    "branch": "main",
-                    "path": "/"
-                }
-            }
+        }
+        
+        # Attempt 1: POST (Create Pages configuration)
+        response = requests.post(url, json=data, headers=headers)
+        
+        if response.status_code == 201:
+            print("GitHub Pages enabled successfully (POST 201)")
             
-            response = requests.post(url, json=data, headers=headers)
+        elif response.status_code == 409:
+            # Conflict (Pages already exists)
+            print("GitHub Pages already exists (409 Conflict). Attempting to update configuration.")
             
-            if response.status_code == 201:
-                print("GitHub Pages enabled successfully")
-            elif response.status_code == 409:
-                print("GitHub Pages already enabled")
+            # Attempt 2: PUT (Update Pages configuration)
+            response = requests.put(url, json=data, headers=headers)
+            
+            if response.status_code == 200:
+                print("GitHub Pages configuration updated successfully (PUT 200)")
             else:
-                print(f"Warning: Could not enable GitHub Pages. Status: {response.status_code}")
+                print(f"Warning: Failed to update GitHub Pages configuration. Status: {response.status_code}")
                 print(f"Response: {response.text}")
-                # Try updating instead
-                response = requests.put(url, json=data, headers=headers)
-                if response.status_code == 200:
-                    print("GitHub Pages updated successfully")
-            
-            # Wait for pages to be ready
-            time.sleep(5)
-            
-        except Exception as e:
-            print(f"Warning: Could not enable GitHub Pages: {str(e)}")
-            print("You may need to enable it manually in the repository settings")
+                
+        else:
+            print(f"Warning: Could not enable GitHub Pages (initial POST failed). Status: {response.status_code}")
+            print(f"Response: {response.text}")
+
+        # Adding a short delay to allow GitHub internal processes to start
+        time.sleep(3)
+
