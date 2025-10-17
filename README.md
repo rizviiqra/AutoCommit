@@ -1,11 +1,9 @@
-<<<<<<< HEAD
 
-=======
-An automated deployment system that receives app briefs via API, generates code using OpenAI GPT-4, creates GitHub repositories, and deploys applications to GitHub Pages with support for iterative revisions.
+An automated deployment system that receives app briefs via API, generates code using Google generative ai, creates GitHub repositories, and deploys applications to GitHub Pages with support for iterative revisions.
 
 ## ⚙️Tech Stack
 - Backend: Python 3.13, Flask 3.0
-- LLM: OpenAI GPT-4
+- LLM: Google generative ai
 - Version Control: PyGithub 2.8
 - Deployment: Render
 - Environment: python-dotenv
@@ -19,7 +17,7 @@ An automated deployment system that receives app briefs via API, generates code 
 - Returns appropriate HTTP status codes.
 
 ## Workflow
-> Request → Verify Secret → Generate Code (OpenAI) → Create/Update GitHub Repo → Enable Pages → Notify Evaluation URL → Response
+> Request → Verify Secret → Generate Code (Google generative ai) → Create/Update GitHub Repo → Enable Pages → Notify Evaluation URL → Response
 
 ## The goal of the mini project
 
@@ -37,4 +35,4 @@ This project demonstrates the practical application of LLM-powered automation in
 - GitHub token has minimal required permissions.
 - `.env` file excluded from github repo.
 - Secret verification on all requests.
->>>>>>> bd77c089450b9a25189103fdc05db94e00a3b1aa
+
