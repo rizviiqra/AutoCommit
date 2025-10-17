@@ -18,6 +18,16 @@ An automated deployment system that receives app briefs via API, generates code 
 ## Workflow
 > Request → Verify Secret → Generate Code (OpenAI) → Create/Update GitHub Repo → Enable Pages → Notify Evaluation URL → Response
 
+## The goal of the mini project
+
+This project demonstrates the practical application of LLM-powered automation in software development workflows. The key learning objectives are:
+
+- **API Development**: Building robust REST APIs that handle complex workflows.
+- **LLM Integration**: Leveraging large language models for code generation and automation.
+- **CI/CD Automation**: Implementing automated deployment pipelines using GitHub APIs.
+- **Error Handling**: Managing asynchronous operations, retries, and failure recovery.
+- **End-to-End Workflow**: Orchestrating multiple services (LLM, GitHub, deployment platforms) into a cohesive system.
+
 ## Security Measures
 
 - Secrets managed via environment variables.
