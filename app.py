@@ -1,15 +1,13 @@
+import threading
 from flask import Flask, request, jsonify
 import os
 import time
 import requests
-import threading # CRITICAL FIX: For non-blocking operations
 from dotenv import load_dotenv
-
-# Assuming 'generator' and 'githubcode' are in the same directory
 from generator import generate_app_code
 from githubcode import GitHubManager
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
@@ -21,66 +19,113 @@ GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 GITHUB_USERNAME = os.getenv('GITHUB_USERNAME')
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-# Initialize GitHub manager (assuming environment variables are set)
+# Initialize GitHub manager
 githubcode = GitHubManager(GITHUB_TOKEN, GITHUB_USERNAME)
 
 def verify_secret(secret):
     """Verify if the provided secret matches"""
     return secret == STUDENT_SECRET
 
-def send_to_evaluation_url_sync(evaluation_url, payload, max_retries=5):
-    """
-    Synchronous function with exponential backoff designed to run in a
-    separate thread, preventing the main Flask process from blocking.
-    """
+def send_to_evaluation_url(evaluation_url, payload, max_retries=5):
+    """Send POST request to evaluation URL with exponential backoff and retries"""
     delay = 1
     for attempt in range(max_retries):
         try:
-            # Note: We use a longer timeout here as the evaluation server might be slow
+            # We use a short timeout since the evaluation endpoint is only expected to queue the job.
             response = requests.post(
                 evaluation_url,
                 json=payload,
                 headers={'Content-Type': 'application/json'},
-                timeout=60 # Increased timeout for slow external API
+                timeout=30 
             )
             if response.status_code == 200:
-                print(f"[Evaluation Thread] Success: Sent to evaluation URL: {evaluation_url}")
+                print(f"[EVAL-POST] Successfully sent to evaluation URL: {evaluation_url}")
                 return True
             else:
-                print(f"[Evaluation Thread] Warning: Evaluation URL returned {response.status_code}: {response.text}")
+                # Log non-200 responses
+                print(f"[EVAL-POST] Evaluation URL returned {response.status_code}: {response.text}")
         except Exception as e:
-            print(f"[Evaluation Thread] Error sending to evaluation URL (attempt {attempt + 1}): {str(e)}")
+            # Log connection errors
+            print(f"[EVAL-POST] Error sending to evaluation URL (attempt {attempt + 1}): {str(e)}")
         
+        # Retry logic
         if attempt < max_retries - 1:
-            print(f"[Evaluation Thread] Retrying in {delay} seconds...")
+            print(f"[EVAL-POST] Retrying in {delay} seconds...")
             time.sleep(delay)
-            delay *= 2  # Exponential backoff
+            delay *= 2  # Exponential backoff: 1, 2, 4, 8, 16 seconds
     
-    print(f"[Evaluation Thread] FAILED to send to evaluation URL after {max_retries} attempts.")
+    print("[EVAL-POST] Failed to send to evaluation URL after all retries.")
     return False
 
 def start_evaluation_thread(evaluation_url, payload):
-    """Starts the evaluation call in a non-blocking thread."""
-    thread = threading.Thread(target=send_to_evaluation_url_sync, args=(evaluation_url, payload))
-    thread.daemon = True # Allows the thread to exit when the main program exits
+    """Starts a new thread to send the evaluation POST, preventing the main Flask thread from blocking."""
+    thread = threading.Thread(target=send_to_evaluation_url, args=(evaluation_url, payload))
     thread.start()
-    print("Evaluation POST dispatched to a separate, non-blocking thread.")
+    print("[ASYNC] Evaluation thread started in background.")
+
+def generate_readme_content(task, brief, checks, round_num):
+    """Generates a detailed, professional README content block."""
+    status_emoji = "✅" if round_num > 1 else "🏗️"
+    
+    # Generate the list of requirements
+    requirements_list = chr(10).join(f'- {check}' for check in checks)
+
+    # Determine the status and revision history
+    status_header = f"## Project Status (Round {round_num}) {status_emoji}"
+    revision_history = ""
+    if round_num > 1:
+        revision_history = """
+### Recent Updates
+This repository was updated for a revision round to meet new or modified requirements. The codebase has been refactored/modified as specified in the latest brief.
+"""
+    
+    return f"""# {task}
+
+## Application Overview
+{brief}
+
+This application was generated and deployed as part of an automated development and evaluation pipeline.
+
+{status_header}
+| Detail | Value |
+| :--- | :--- |
+| **Current Round** | {round_num} |
+| **Target Technology** | Single-file HTML/CSS/JS (Vanilla or CDN-assisted) |
+| **Deployment Platform** | GitHub Pages |
+
+{revision_history}
+
+---
+
+## Functional Requirements
+The application was built to satisfy the following functional and structural checks:
+
+{requirements_list}
+
+---
+
+## Usage
+To use the application, simply navigate to the deployed GitHub Pages URL in any modern browser (desktop or mobile).
+
+## Code and Licensing
+The core application code is located in `index.html`. It is a self-contained file generated by a Large Language Model (LLM) and designed to be clean and maintainable.
+
+## License
+This project is released under the **MIT License**. See the `LICENSE` file in the repository root for full details.
+"""
 
 @app.route('/api-endpoint', methods=['POST'])
 def handle_request():
     """Main endpoint to handle build and revision requests"""
     try:
         data = request.json
-        if not data:
-             return jsonify({'error': 'No JSON payload provided'}), 400
-
-        # --- Robust Input Validation ---
+        
+        # 0. Basic Validation
         required_fields = ['secret', 'email', 'task', 'brief', 'evaluation_url']
-        for field in required_fields:
-            if not data.get(field):
-                return jsonify({'error': f'Missing required field: {field}'}), 400
+        if not all(field in data for field in required_fields):
+            return jsonify({'error': 'Missing required fields in payload.'}), 400
 
-        # Verify secret
+        # 1. Verify secret
         if not verify_secret(data.get('secret')):
             return jsonify({'error': 'Invalid secret'}), 403
         
@@ -95,60 +140,40 @@ def handle_request():
         attachments = data.get('attachments', [])
         
         print(f"\n{'='*50}")
-        print(f"Received request for Round {round_num}")
-        print(f"Task: {task}")
-        print(f"Brief: {brief[:50]}...")
-        print(f"{'='*50}\n")
+        print(f"Received request for Round {round_num} - Task: {task}")
         
-        # Generate unique repo name based on task (sanitized)
-        repo_name = task.replace('/', '-').replace(' ', '-').lower() 
+        # Generate unique repo name based on task
+        repo_name = task.replace('/', '-').replace(' ', '-')
         
+        # 2. Generate app code using LLM
         is_revision = round_num > 1
+        print(f"Generating {'updated' if is_revision else 'initial'} app code with LLM...")
+        app_code = generate_app_code(brief, checks, attachments, GEMINI_API_KEY, is_revision=is_revision)
         
-        # --- 1. Generate App Code ---
-        print(f"Generating {'updated' if is_revision else 'initial'} app code with LLM (including any attachments)...")
-        app_code = generate_app_code(
-            brief=brief, 
-            checks=checks, 
-            attachments=attachments, 
-            api_key=GEMINI_API_KEY, 
-            is_revision=is_revision
-        )
+        # 3. Generate improved README content
+        readme_content = generate_readme_content(task, brief, checks, round_num)
         
-        # --- 2. Prepare README Content ---
-        readme_sections = [
-            f"# {task}",
-            f"## Description\n{brief}",
-            f"## Requirements\n{chr(10).join(f'- {check}' for check in checks)}",
-            f"## Usage\nOpen the deployed GitHub Pages URL in your browser.",
-            f"## Code Explanation\nThis application was generated and {'updated' if is_revision else 'created'} to fulfill the requirements specified in the brief.",
-            f"## License\nMIT License - See LICENSE file for details"
-        ]
-        
-        if is_revision:
-            readme_sections.insert(4, "## Recent Updates\nThis application has been updated to meet additional requirements in Round 2.")
-            
-        readme_content = '\n\n'.join(readme_sections)
-
-        # --- 3. Deploy/Update GitHub ---
-        if not is_revision:
+        # 4. Deploy or Update
+        if round_num == 1:
             # Round 1: Build and Deploy
+            print("Starting Round 1: Build and Deploy")
             repo_url, commit_sha, pages_url = githubcode.create_and_deploy_repo(
                 repo_name=repo_name,
                 app_code=app_code,
                 readme_content=readme_content
             )
         else:
-            # Round 2: Revise and Update
+            # Round 2+: Revise and Update
+            print(f"Starting Round {round_num}: Revise and Update")
             repo_url, commit_sha, pages_url = githubcode.update_repo(
                 repo_name=repo_name,
                 app_code=app_code,
                 readme_content=readme_content
             )
-            
-        print(f"Deployment complete. Pages URL: {pages_url}")
         
-        # --- 4. Prepare and Send Evaluation Payload (Asynchronously) ---
+        print(f"Deployment complete. Commit SHA: {commit_sha}")
+        
+        # 5. Prepare and start asynchronous evaluation ping
         eval_payload = {
             'email': email,
             'task': task,
@@ -159,10 +184,10 @@ def handle_request():
             'pages_url': pages_url
         }
         
-        # Start the non-blocking thread for the evaluation call
+        print(f"Initiating asynchronous ping to evaluation URL: {evaluation_url}")
         start_evaluation_thread(evaluation_url, eval_payload)
         
-        # Return success response immediately (HTTP 200 required by project spec)
+        # 6. Return immediate success response (CRITICAL for non-blocking)
         return jsonify({
             'status': 'success',
             'message': f'Round {round_num} completed and evaluation initiated.',
@@ -172,7 +197,7 @@ def handle_request():
         }), 200
         
     except Exception as e:
-        print(f"FATAL ERROR processing request: {str(e)}")
+        print(f"!!! FATAL ERROR processing request: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Internal Server Error: {str(e)}'}), 500
@@ -183,7 +208,7 @@ def health_check():
     return jsonify({'status': 'healthy'}), 200
 
 if __name__ == '__main__':
-    # Verify environment variables are set before starting the server
+    # Verify environment variables are set
     required_vars = ['STUDENT_EMAIL', 'STUDENT_SECRET', 'GITHUB_TOKEN', 
                      'GITHUB_USERNAME', 'GEMINI_API_KEY']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
@@ -194,4 +219,6 @@ if __name__ == '__main__':
         exit(1)
     
     print(f"Starting Flask app for student: {STUDENT_EMAIL}")
+    print(f"GitHub username: {GITHUB_USERNAME}")
     app.run(host='0.0.0.0', port=5000, debug=True)
+
