@@ -1,23 +1,59 @@
 import google.generativeai as genai
+from google.generativeai.types import Part
 import base64
-import json
+import os
+import json # Kept for potential future structured output, though unused in core function
+
+def parse_attachment(attachment):
+    """
+    Parses a data URI attachment (e.g., data:image/png;base64,...)
+    into a Gemini API Part object.
+    """
+    url = attachment.get('url', '')
+    name = attachment.get('name', 'attachment')
+
+    if not url.startswith("data:"):
+        print(f"Warning: Attachment {name} is not a data URI. Skipping.")
+        return None
+
+    # Example: data:image/png;base64,iVBORw...
+    try:
+        mime_type, encoded_data = url.split(',', 1)
+        mime_type = mime_type.split(':')[1].split(';')[0]
+        
+        # Decode the base64 data
+        data_bytes = base64.b64decode(encoded_data)
+
+        print(f"Parsed attachment: {name} ({mime_type}, {len(data_bytes)} bytes)")
+        
+        return Part.from_bytes(data=data_bytes, mime_type=mime_type)
+
+    except Exception as e:
+        print(f"Error parsing attachment {name}: {str(e)}")
+        return None
+
 
 def generate_app_code(brief, checks, attachments, api_key, is_revision=False):
     """
-    Generate app code using Google Gemini API based on the brief and requirements
+    Generate app code using Google Gemini API based on the brief, requirements, and attachments.
     """
+    # CRITICAL FIX: Use the modern, multimodal model
+    MODEL_NAME = 'gemini-2.5-flash'
     genai.configure(api_key=api_key)
     
-    # Process attachments to include in prompt
-    attachment_info = ""
-    if attachments:
-        attachment_info = "\n\nAttachments provided:\n"
-        for att in attachments:
-            attachment_info += f"- {att['name']}: {att['url'][:100]}...\n"
+    # 1. Process attachments into multimodal parts
+    image_parts = []
+    attachment_descriptions = []
+    for att in attachments:
+        part = parse_attachment(att)
+        if part:
+            image_parts.append(part)
+            attachment_descriptions.append(f"- {att['name']} (image, loaded successfully)")
     
-    # Build the prompt
+    attachment_info = "\n\n" + "\n".join(attachment_descriptions) if attachment_descriptions else ""
+
+    # 2. Build the text prompt
     checks_text = "\n".join(f"- {check}" for check in checks)
-    
     action = "update" if is_revision else "create"
     
     prompt = f"""You are an expert web developer. {action.capitalize()} a complete, production-ready single-page web application based on these requirements:
@@ -30,28 +66,23 @@ REQUIREMENTS TO MEET:
 {attachment_info}
 
 IMPORTANT INSTRUCTIONS:
-1. Create a SINGLE HTML file with embedded CSS and JavaScript
-2. The app must be fully functional and meet ALL requirements
-3. Use modern, clean UI design with proper styling
-4. Handle edge cases and errors gracefully
-5. Include clear instructions in the UI if needed
-6. Make it mobile-responsive
-7. If attachments are provided, use them appropriately in the app
-8. Add helpful comments in the code
-9. The app should work immediately when opened in a browser
-10. Do NOT use any external dependencies that require npm/build steps
-11. You can use CDN links for libraries if absolutely necessary
+1. Create a SINGLE HTML file with embedded CSS and JavaScript (index.html)
+2. The app must be fully functional and meet ALL requirements.
+3. Use the provided image attachment(s) directly in the HTML using data URIs or base64. Do NOT link to external image URLs.
+4. Use modern, clean UI design with proper styling (e.g., Tailwind via CDN).
+5. Make it mobile-responsive.
+6. Return ONLY the complete HTML code. Do NOT include any explanations, external markdown blocks, or leading/trailing comments. The output must start with <!DOCTYPE html>."""
 
-Return ONLY the complete HTML code. No explanations, no markdown code blocks, just the raw HTML file content starting with <!DOCTYPE html>."""
-
+    # 3. Assemble all parts (text prompt must be the first element)
+    contents = [prompt] + image_parts
+    
     try:
-        # Use Gemini Pro model
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel(MODEL_NAME)
         
-        # Generate content
-        response = model.generate_content(prompt)
+        # Generate content with multimodal parts
+        response = model.generate_content(contents)
         
-        # Extract the generated code
+        # Extract and clean the generated code
         generated_code = response.text.strip()
         
         # Clean up if the model returns markdown code blocks
@@ -64,7 +95,7 @@ Return ONLY the complete HTML code. No explanations, no markdown code blocks, ju
         if not (generated_code.lower().startswith("<!doctype") or generated_code.lower().startswith("<html")):
             generated_code = f"<!DOCTYPE html>\n{generated_code}"
         
-        print(f"Generated {len(generated_code)} characters of code")
+        print(f"Generated {len(generated_code)} characters of code using {MODEL_NAME}")
         return generated_code
         
     except Exception as e:
@@ -76,6 +107,7 @@ def generate_fallback_html(brief, checks):
     """
     Generate a simple fallback HTML page if LLM generation fails
     """
+    # This function remains mostly the same for simple error handling
     checks_html = "\n".join(f"<li>{check}</li>" for check in checks)
     
     return f"""<!DOCTYPE html>
@@ -83,7 +115,7 @@ def generate_fallback_html(brief, checks):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Application</title>
+    <title>Application Fallback</title>
     <style>
         * {{
             margin: 0;
@@ -92,7 +124,7 @@ def generate_fallback_html(brief, checks):
         }}
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #e0e0e0 0%, #cccccc 100%);
             min-height: 100vh;
             display: flex;
             justify-content: center;
@@ -105,23 +137,24 @@ def generate_fallback_html(brief, checks):
             padding: 40px;
             max-width: 600px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            border: 2px solid #ff5252;
         }}
         h1 {{
-            color: #333;
+            color: #ff5252;
             margin-bottom: 20px;
         }}
         .brief {{
-            background: #f5f5f5;
+            background: #ffebee;
             padding: 15px;
             border-radius: 8px;
             margin-bottom: 20px;
-            color: #666;
+            color: #d32f2f;
         }}
         .requirements {{
             margin-top: 20px;
         }}
         .requirements h2 {{
-            color: #667eea;
+            color: #3f51b5;
             font-size: 1.2em;
             margin-bottom: 10px;
         }}
@@ -137,7 +170,8 @@ def generate_fallback_html(brief, checks):
 </head>
 <body>
     <div class="container">
-        <h1>Application</h1>
+        <h1>LLM Generation FAILED - Fallback Page</h1>
+        <p>The core application logic failed to generate the required code. Displaying brief and requirements instead.</p>
         <div class="brief">
             <strong>Brief:</strong> {brief}
         </div>
