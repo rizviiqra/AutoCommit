@@ -1,12 +1,12 @@
-import openai
+import google.generativeai as genai
 import base64
 import json
 
 def generate_app_code(brief, checks, attachments, api_key, is_revision=False):
     """
-    Generate app code using OpenAI API based on the brief and requirements
+    Generate app code using Google Gemini API based on the brief and requirements
     """
-    openai.api_key = api_key
+    genai.configure(api_key=api_key)
     
     # Process attachments to include in prompt
     attachment_info = ""
@@ -42,28 +42,17 @@ IMPORTANT INSTRUCTIONS:
 10. Do NOT use any external dependencies that require npm/build steps
 11. You can use CDN links for libraries if absolutely necessary
 
-Return ONLY the complete HTML code. No explanations, no markdown, just the raw HTML file content."""
+Return ONLY the complete HTML code. No explanations, no markdown code blocks, just the raw HTML file content starting with <!DOCTYPE html>."""
 
     try:
-        # Call OpenAI API
-        response = openai.chat.completions.create(
-            model="gpt-4",  # or "gpt-3.5-turbo" for faster/cheaper
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert web developer who creates clean, functional, single-file web applications. You always return complete, working code without any markdown formatting or explanations."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.7,
-            max_tokens=4000
-        )
+        # Use Gemini Pro model
+        model = genai.GenerativeModel('gemini-pro')
+        
+        # Generate content
+        response = model.generate_content(prompt)
         
         # Extract the generated code
-        generated_code = response.choices[0].message.content.strip()
+        generated_code = response.text.strip()
         
         # Clean up if the model returns markdown code blocks
         if generated_code.startswith("```html"):
@@ -79,7 +68,7 @@ Return ONLY the complete HTML code. No explanations, no markdown, just the raw H
         return generated_code
         
     except Exception as e:
-        print(f"Error generating code with OpenAI: {str(e)}")
+        print(f"Error generating code with Gemini: {str(e)}")
         # Return a fallback simple HTML page
         return generate_fallback_html(brief, checks)
 

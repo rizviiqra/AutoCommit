@@ -15,7 +15,7 @@ STUDENT_EMAIL = os.getenv('STUDENT_EMAIL')
 STUDENT_SECRET = os.getenv('STUDENT_SECRET')
 GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
 GITHUB_USERNAME = os.getenv('GITHUB_USERNAME')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # Initialize GitHub manager
 githubcode = GitHubManager(GITHUB_TOKEN, GITHUB_USERNAME)
@@ -86,7 +86,7 @@ def handle_request():
             
             # Generate app code using LLM
             print("Generating app code with LLM...")
-            app_code = generate_app_code(brief, checks, attachments, OPENAI_API_KEY)
+            app_code = generate_app_code(brief, checks, attachments, GEMINI_API_KEY)
             
             # Create README content
             readme_content = f"""# {task}
