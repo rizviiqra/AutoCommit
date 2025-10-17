@@ -125,7 +125,7 @@ MIT License - See LICENSE file for details
             
             # Generate updated app code using LLM
             print("Generating updated app code with LLM...")
-            app_code = generate_app_code(brief, checks, attachments, OPENAI_API_KEY, is_revision=True)
+            app_code = generate_app_code(brief, checks, attachments, GEMINI_API_KEY, is_revision=True)
             
             # Update README content
             readme_content = f"""# {task}
