@@ -1,8 +1,8 @@
 import google.generativeai as genai
-from google.generativeai.types import Part
+from google.generativeai import types # FIXED: Changed from 'google.generativeai.types import Part'
 import base64
 import os
-import json # Kept for potential future structured output, though unused in core function
+import json
 
 def parse_attachment(attachment):
     """
@@ -26,7 +26,8 @@ def parse_attachment(attachment):
 
         print(f"Parsed attachment: {name} ({mime_type}, {len(data_bytes)} bytes)")
         
-        return Part.from_bytes(data=data_bytes, mime_type=mime_type)
+        # FIX APPLIED HERE: Using types.Part instead of just Part
+        return types.Part.from_bytes(data=data_bytes, mime_type=mime_type)
 
     except Exception as e:
         print(f"Error parsing attachment {name}: {str(e)}")
@@ -37,7 +38,6 @@ def generate_app_code(brief, checks, attachments, api_key, is_revision=False):
     """
     Generate app code using Google Gemini API based on the brief, requirements, and attachments.
     """
-    # CRITICAL FIX: Use the modern, multimodal model
     MODEL_NAME = 'gemini-2.5-flash'
     genai.configure(api_key=api_key)
     
@@ -107,7 +107,6 @@ def generate_fallback_html(brief, checks):
     """
     Generate a simple fallback HTML page if LLM generation fails
     """
-    # This function remains mostly the same for simple error handling
     checks_html = "\n".join(f"<li>{check}</li>" for check in checks)
     
     return f"""<!DOCTYPE html>
