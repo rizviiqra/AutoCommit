@@ -199,7 +199,7 @@ def health_check():
 if __name__ == '__main__':
     # Verify environment variables are set
     required_vars = ['STUDENT_EMAIL', 'STUDENT_SECRET', 'GITHUB_TOKEN', 
-                     'GITHUB_USERNAME', 'OPENAI_API_KEY']
+                     'GITHUB_USERNAME', 'GEMINI_API_KEY']
     missing_vars = [var for var in required_vars if not os.getenv(var)]
     
     if missing_vars:
