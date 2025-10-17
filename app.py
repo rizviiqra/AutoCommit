@@ -65,7 +65,7 @@ def start_evaluation_thread(evaluation_url, payload):
 
 def generate_readme_content(task, brief, checks, round_num):
     """Generates a detailed, professional README content block."""
-    status_emoji = "✅" if round_num > 1 else "🏗️"
+    status_emoji = "⚙️" if round_num > 1 else "✔️"
     
     # Generate the list of requirements
     requirements_list = chr(10).join(f'- {check}' for check in checks)
